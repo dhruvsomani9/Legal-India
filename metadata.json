@@ -1,0 +1,6 @@
+{
+  "name": "Legal India - AI Legal Assistant",
+  "description": "Accessible, verified legal assistance for India. Understand rights under BNS, BNSS, BSA, consumer, tenancy & labour laws, emergency helplines, draft notices, and analyze legal documents in Indian languages.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
