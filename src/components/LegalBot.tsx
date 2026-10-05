@@ -1,34 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Send,
+  Square,
+  RotateCcw,
   Mic,
   MicOff,
   Volume2,
   VolumeX,
-  Scale,
-  User,
-  Plus,
-  RotateCcw,
-  Sparkles,
-  PhoneCall,
   FileText,
   Copy,
   Check,
-  ShieldAlert,
-  Download,
+  Plus,
   Trash2,
   ChevronLeft,
   ChevronRight,
   Printer,
   X,
   Globe,
-  ExternalLink,
+  Download,
+  PhoneCall,
+  ShieldAlert,
+  ArrowUp,
+  User,
   MessageSquare,
-  Clock,
-  Building,
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES, EMERGENCY_HELPLINES } from '../data/legalCorpus';
-import { DOCUMENT_TEMPLATES, DocumentTemplate } from '../data/documentTemplates';
+import { DOCUMENT_TEMPLATES } from '../data/documentTemplates';
+import { LegalIndiaLogo } from './LegalIndiaLogo';
+import { MarkdownMessage } from './MarkdownMessage';
 
 export interface ChatMessage {
   id: string;
@@ -47,8 +46,15 @@ export interface ChatSession {
   messages: ChatMessage[];
 }
 
-const STORAGE_SESSIONS_KEY = 'legalindia_sessions_v2';
-const STORAGE_ACTIVE_ID_KEY = 'legalindia_active_session_id_v2';
+interface PendingPrompt {
+  sessionId: string;
+  text: string;
+  messagesForApi: { role: string; content: string }[];
+  botMessageId: string;
+}
+
+const STORAGE_SESSIONS_KEY = 'legalindia_chat_sessions_v4';
+const STORAGE_ACTIVE_ID_KEY = 'legalindia_active_id_v4';
 
 export const LegalBot: React.FC = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en');
@@ -59,18 +65,32 @@ export const LegalBot: React.FC = () => {
   const [docFormData, setDocFormData] = useState<Record<string, string>>({});
   const [docLanguage, setDocLanguage] = useState<'en' | 'hi'>('en');
 
-  // Default initial message
+  // Welcome message generator
   const createWelcomeMessage = (lang: string): ChatMessage => ({
-    id: 'welcome',
+    id: 'welcome_' + Date.now(),
     role: 'model',
     content:
       lang === 'hi'
-        ? 'नमस्ते। मैं लीगल इंडिया एआई (Legal India AI) हूँ — भारत का निःशुल्क, विश्वसनीय कानूनी सलाहकार।\n\nआप किसी भी भाषा या बोली में अपनी समस्या बता सकते हैं। मैं पूरी बातचीत को याद रखता हूँ, आपको भारतीय कानून (भारतीय न्याय संहिता 2023, उपभोक्ता संरक्षण अधिनियम, एनआई एक्ट, किरायेदारी अधिकार) के तहत आपके अधिकार बताता हूँ और आवश्यक कानूनी नोटिस तैयार कर सकता हूँ।\n\nआज मैं आपकी किस कानूनी समस्या में सहायता कर सकता हूँ?'
-        : 'Namaste. I am Legal India AI — your trusted, accessible legal counsel for India.\n\nDescribe your legal situation in your own words or click the microphone to speak in any Indian language. I maintain continuous memory of your case facts, explain your statutory rights under current law (Bharatiya Nyaya Sanhita 2023, Consumer Protection Act, NI Act, Model Tenancy Act), and can draft ready-to-use notices for you.\n\nWhat legal issue can I assist you with today?',
+        ? `नमस्ते। मैं **लीगल इंडिया एआई (Legal India AI)** हूँ — भारत का निःशुल्क, विश्वसनीय कानूनी सलाहकार।
+
+आप अपनी किसी भी कानूनी समस्या को अपनी भाषा या बोली में साझा कर सकते हैं। मैं:
+* **भारतीय कानूनों (BNS 2023, BNSS 2023, उपभोक्ता संरक्षण 2019, एनआई एक्ट)** के तहत आपके अधिकारों का विश्लेषण करता हूँ;
+* आपको न्यायालय और पुलिस से जुड़े तत्काल कदम बताता हूँ;
+* आवश्यक **लीगल डिमांड नोटिस या शिकायत पत्र** तैयार कर सकता हूँ।
+
+आज मैं आपकी किस कानूनी समस्या में सहायता कर सकता हूँ?`
+        : `Namaste! I am **Legal India AI**, your senior Indian legal counsel and access-to-justice companion.
+
+You can describe your legal situation in your own words, upload dispute details, or use voice dictation in any Indian language. I will:
+* **Analyze your legal standing** under current Indian statutes (Bharatiya Nyaya Sanhita 2023, Consumer Protection Act 2019, Section 138 NI Act, Model Tenancy Act);
+* **Identify strict limitation deadlines** and applicable judicial forums;
+* **Draft ready-to-serve court notices** and police complaint petitions.
+
+What legal issue or question can I assist you with today?`,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   });
 
-  // State: All Sessions
+  // State: All Sessions (Persisted via localStorage across page reloads)
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_SESSIONS_KEY);
@@ -81,13 +101,13 @@ export const LegalBot: React.FC = () => {
         }
       }
     } catch (e) {
-      console.warn('Error reading stored sessions:', e);
+      console.warn('Error reading stored sessions from localStorage:', e);
     }
     const defaultId = 'session_' + Date.now();
     return [
       {
         id: defaultId,
-        title: 'New Legal Consultation',
+        title: 'New Consultation',
         createdAt: Date.now(),
         lastUpdatedAt: Date.now(),
         language: 'en',
@@ -96,7 +116,7 @@ export const LegalBot: React.FC = () => {
     ];
   });
 
-  // State: Active Session ID
+  // State: Active Session ID (Persisted via localStorage across page reloads)
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
     try {
       const storedId = localStorage.getItem(STORAGE_ACTIVE_ID_KEY);
@@ -107,17 +127,40 @@ export const LegalBot: React.FC = () => {
     return sessions[0]?.id || 'session_' + Date.now();
   });
 
+  // Ensure activeSessionId is always aligned with a valid session in state
+  useEffect(() => {
+    if (sessions.length > 0 && !sessions.some((s) => s.id === activeSessionId)) {
+      setActiveSessionId(sessions[0].id);
+    }
+  }, [sessions, activeSessionId]);
+
+  // Persist conversation and sessions to localStorage on every update
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_SESSIONS_KEY, JSON.stringify(sessions));
+      localStorage.setItem(STORAGE_ACTIVE_ID_KEY, activeSessionId);
+    } catch (e) {
+      console.error('Failed to persist sessions to localStorage:', e);
+    }
+  }, [sessions, activeSessionId]);
+
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
   const messages = activeSession ? activeSession.messages : [];
 
+  // Chat inputs & states
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [docCopied, setDocCopied] = useState(false);
 
+  // Dedicated pending prompt state to trigger the Gemini API communication useEffect hook
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<any>(null);
 
   // Curated quick scenarios
@@ -125,45 +168,204 @@ export const LegalBot: React.FC = () => {
     {
       title: 'Tenant Security Deposit',
       desc: 'Landlord refusing to refund deposit after vacating flat',
-      tag: 'Tenancy Rights',
-      prompt: 'My landlord in Bengaluru is refusing to return my ₹75,000 security deposit even after I vacated peacefully 2 weeks ago and cleared all bills. What should I do?',
+      tag: 'Tenancy Act',
+      prompt: 'My landlord in Bengaluru is refusing to return my ₹75,000 security deposit even after I vacated peacefully 2 weeks ago and cleared all utility bills. What legal notice should I send?',
     },
     {
-      title: 'Cheque Bounce Dishonour',
+      title: 'Cheque Bounce Section 138',
       desc: 'Client issued cheque of ₹1.5L returned for insufficient funds',
-      tag: 'Section 138 NI Act',
-      prompt: 'A business client gave me a cheque of ₹1,50,000 which bounced due to "Funds Insufficient" 5 days ago. What notice should I send within 30 days?',
+      tag: 'NI Act 1881',
+      prompt: 'A business client gave me a cheque of ₹1,50,000 which bounced due to "Funds Insufficient" 5 days ago. What are the strict limitation deadlines under Section 138?',
     },
     {
-      title: 'Digital Arrest Threat',
+      title: 'Fake Digital Arrest Threat',
       desc: 'Fake police / CBI Skype video call demanding money',
-      tag: 'Cyber Extortion',
+      tag: 'Extortion Scam',
       prompt: 'I received a video call from someone in a police uniform claiming to be CBI Mumbai, saying my Aadhaar is linked to a parcel with contraband and demanding money.',
     },
     {
       title: 'Defective Product Refund',
-      desc: 'Online e-commerce platform delivered broken goods and refused return',
+      desc: 'Online platform delivered broken goods and refused return',
       tag: 'Consumer Protection',
-      prompt: 'Bought a 55-inch LED TV online for ₹42,000. It arrived with a broken display and the seller is refusing replacement or refund citing policy.',
+      prompt: 'Bought a 55-inch LED TV online for ₹42,000. It arrived with a broken display and the seller is refusing replacement or refund citing return policy.',
     },
   ];
 
-  // Save sessions to localStorage
+  // =========================================================================
+  // Robust Gemini API Communication useEffect Hook
+  // Handles streaming or updating the AI response into the conversation history
+  // =========================================================================
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_SESSIONS_KEY, JSON.stringify(sessions));
-      localStorage.setItem(STORAGE_ACTIVE_ID_KEY, activeSessionId);
-    } catch (e) {
-      console.error('Failed to save sessions to localStorage:', e);
-    }
-  }, [sessions, activeSessionId]);
+    if (!pendingPrompt) return;
 
-  // Scroll to bottom
+    const { sessionId, messagesForApi, botMessageId, text } = pendingPrompt;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsStreaming(true);
+
+    let accumulatedContent = '';
+
+    const streamGeminiResponse = async () => {
+      try {
+        const response = await fetch('/api/legal/chat/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: messagesForApi,
+            language: selectedLanguage,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`Server returned status ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunkStr = decoder.decode(value, { stream: true });
+          const lines = chunkStr.split('\n');
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const dataStr = trimmed.slice(6);
+            if (dataStr === '[DONE]') break;
+
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.text) {
+                accumulatedContent += data.text;
+
+                // Stream/update AI response directly in UI state
+                setSessions((prev) => {
+                  const idx = prev.findIndex((s) => s.id === sessionId);
+                  if (idx === -1) return prev;
+                  const copy = [...prev];
+                  const sessionMsgs = [...copy[idx].messages];
+                  const msgIdx = sessionMsgs.findIndex((m) => m.id === botMessageId);
+
+                  if (msgIdx !== -1) {
+                    sessionMsgs[msgIdx] = {
+                      ...sessionMsgs[msgIdx],
+                      content: accumulatedContent,
+                    };
+                  }
+                  copy[idx] = {
+                    ...copy[idx],
+                    lastUpdatedAt: Date.now(),
+                    messages: sessionMsgs,
+                  };
+                  return copy;
+                });
+              }
+            } catch (e) {
+              // Non-JSON SSE line ignored
+            }
+          }
+        }
+
+        // Determine if a legal notice template matches
+        let matchedTemplate: string | undefined = undefined;
+        const lower = (text + ' ' + accumulatedContent).toLowerCase();
+        if (lower.includes('cheque') || lower.includes('check') || lower.includes('138')) {
+          matchedTemplate = 'cheque-bounce-notice';
+        } else if (lower.includes('deposit') || lower.includes('rent') || lower.includes('landlord')) {
+          matchedTemplate = 'security-deposit-notice';
+        } else if (lower.includes('consumer') || lower.includes('defective') || lower.includes('refund')) {
+          matchedTemplate = 'consumer-complaint';
+        } else if (lower.includes('fir') || lower.includes('police') || lower.includes('snatch')) {
+          matchedTemplate = 'police-complaint-letter';
+        } else if (lower.includes('rti') || lower.includes('information')) {
+          matchedTemplate = 'rti-application';
+        }
+
+        if (matchedTemplate) {
+          setSessions((prev) => {
+            const idx = prev.findIndex((s) => s.id === sessionId);
+            if (idx === -1) return prev;
+            const copy = [...prev];
+            const sessionMsgs = [...copy[idx].messages];
+            const msgIdx = sessionMsgs.findIndex((m) => m.id === botMessageId);
+            if (msgIdx !== -1) {
+              sessionMsgs[msgIdx] = {
+                ...sessionMsgs[msgIdx],
+                templateHint: matchedTemplate,
+              };
+            }
+            copy[idx] = { ...copy[idx], messages: sessionMsgs };
+            return copy;
+          });
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          console.log('Stream generation aborted by user.');
+        } else {
+          console.warn('Streaming error, falling back to batch API:', err);
+          try {
+            const fbRes = await fetch('/api/legal/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: messagesForApi,
+                language: selectedLanguage,
+              }),
+            });
+            const fbData = await fbRes.json();
+            const fallbackReply = fbData.reply || 'Under Indian law, your rights are protected.';
+
+            setSessions((prev) => {
+              const idx = prev.findIndex((s) => s.id === sessionId);
+              if (idx === -1) return prev;
+              const copy = [...prev];
+              const sessionMsgs = [...copy[idx].messages];
+              const msgIdx = sessionMsgs.findIndex((m) => m.id === botMessageId);
+              if (msgIdx !== -1) {
+                sessionMsgs[msgIdx] = {
+                  ...sessionMsgs[msgIdx],
+                  content: fallbackReply,
+                };
+              }
+              copy[idx] = { ...copy[idx], messages: sessionMsgs };
+              return copy;
+            });
+          } catch (e2) {
+            console.error('Final fallback error:', e2);
+          }
+        }
+      } finally {
+        setIsStreaming(false);
+        setPendingPrompt(null);
+        abortControllerRef.current = null;
+      }
+    };
+
+    streamGeminiResponse();
+
+    return () => {
+      controller.abort();
+    };
+  }, [pendingPrompt, selectedLanguage]);
+
+  // Auto-scroll on new tokens or messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages, isStreaming]);
 
-  // Web Speech Recognition
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+    }
+  }, [input]);
+
+  // Web Speech Recognition setup
   useEffect(() => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -217,7 +419,8 @@ export const LegalBot: React.FC = () => {
       setSpeakingMsgId(null);
     } else {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
+      const cleanText = text.replace(/[*#`_>]/g, '');
+      const utterance = new SpeechSynthesisUtterance(cleanText);
       const langObj = SUPPORTED_LANGUAGES.find((l) => l.code === selectedLanguage);
       if (langObj) utterance.lang = langObj.speechCode;
 
@@ -237,6 +440,8 @@ export const LegalBot: React.FC = () => {
 
   // Start a new session
   const handleNewSession = () => {
+    if (isStreaming) handleStopGenerating();
+
     const newId = 'session_' + Date.now();
     const newSession: ChatSession = {
       id: newId,
@@ -253,6 +458,8 @@ export const LegalBot: React.FC = () => {
   // Delete a session
   const handleDeleteSession = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isStreaming && id === activeSessionId) handleStopGenerating();
+
     if (sessions.length <= 1) {
       handleNewSession();
       return;
@@ -264,117 +471,120 @@ export const LegalBot: React.FC = () => {
     }
   };
 
-  // Handle Send Message
-  const handleSend = async (textToSend?: string) => {
-    const text = textToSend || input;
-    if (!text.trim() || loading) return;
+  // Stop generating stream
+  const handleStopGenerating = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsStreaming(false);
+    setPendingPrompt(null);
+  };
+
+  // Send message: appends user message immediately and triggers Gemini API useEffect
+  const handleSend = (textToSend?: string) => {
+    const text = (textToSend || input).trim();
+    if (!text || isStreaming) return;
+
+    const currentId = activeSession ? activeSession.id : sessions[0]?.id;
+    if (!currentId) return;
 
     const userMessage: ChatMessage = {
-      id: String(Date.now()),
+      id: 'usr_' + Date.now(),
       role: 'user',
-      content: text.trim(),
+      content: text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    // Update active session title if it's the first user message
     const isFirstUserMessage = messages.filter((m) => m.role === 'user').length === 0;
     const computedTitle = isFirstUserMessage
-      ? text.trim().slice(0, 32) + (text.length > 32 ? '...' : '')
+      ? text.slice(0, 32) + (text.length > 32 ? '...' : '')
       : activeSession.title;
 
-    const updatedMessages = [...messages, userMessage];
+    const botMessageId = 'bot_' + Date.now();
+    const initialBotMessage: ChatMessage = {
+      id: botMessageId,
+      role: 'model',
+      content: '',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
 
-    // Update session state
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === activeSessionId
-          ? {
-              ...s,
-              title: computedTitle,
-              lastUpdatedAt: Date.now(),
-              messages: updatedMessages,
-            }
-          : s
-      )
-    );
+    const updatedWithUser = [...messages, userMessage];
+
+    // 1. Immediately append user message & placeholder to chat history
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === currentId);
+      if (idx === -1) {
+        return [
+          {
+            id: currentId,
+            title: computedTitle,
+            createdAt: Date.now(),
+            lastUpdatedAt: Date.now(),
+            language: selectedLanguage,
+            messages: [...updatedWithUser, initialBotMessage],
+          },
+          ...prev,
+        ];
+      }
+      const copy = [...prev];
+      copy[idx] = {
+        ...copy[idx],
+        title: computedTitle,
+        lastUpdatedAt: Date.now(),
+        messages: [...updatedWithUser, initialBotMessage],
+      };
+      return copy;
+    });
 
     setInput('');
-    setLoading(true);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
 
-    try {
-      const apiMessages = updatedMessages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+    // 2. Queue pending prompt to trigger the Gemini API communication useEffect hook
+    const messagesForApi = updatedWithUser.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
 
-      const res = await fetch('/api/legal/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: apiMessages,
-          language: selectedLanguage,
-        }),
-      });
+    setPendingPrompt({
+      sessionId: currentId,
+      text,
+      messagesForApi,
+      botMessageId,
+    });
+  };
 
-      const data = await res.json();
-      const replyText = data.reply || 'Under Indian law, your rights are protected.';
+  // Regenerate last response
+  const handleRegenerate = () => {
+    if (isStreaming) return;
+    const userMessages = messages.filter((m) => m.role === 'user');
+    if (userMessages.length === 0) return;
+    const lastUserMessage = userMessages[userMessages.length - 1];
 
-      // Determine if a legal notice template matches
-      let matchedTemplate: string | undefined = undefined;
-      const lower = (text + ' ' + replyText).toLowerCase();
-      if (lower.includes('cheque') || lower.includes('check') || lower.includes('138')) {
-        matchedTemplate = 'cheque-bounce-notice';
-      } else if (lower.includes('deposit') || lower.includes('rent') || lower.includes('landlord')) {
-        matchedTemplate = 'security-deposit-notice';
-      } else if (lower.includes('consumer') || lower.includes('defective') || lower.includes('refund')) {
-        matchedTemplate = 'consumer-complaint';
-      } else if (lower.includes('fir') || lower.includes('police') || lower.includes('snatch')) {
-        matchedTemplate = 'police-complaint-letter';
-      } else if (lower.includes('rti') || lower.includes('information')) {
-        matchedTemplate = 'rti-application';
-      }
+    const currentId = activeSession ? activeSession.id : sessions[0]?.id;
+    if (!currentId) return;
 
-      const botMessage: ChatMessage = {
-        id: String(Date.now() + 1),
-        role: 'model',
-        content: replyText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        templateHint: matchedTemplate,
-      };
-
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === activeSessionId
-            ? {
-                ...s,
-                lastUpdatedAt: Date.now(),
-                messages: [...updatedMessages, botMessage],
-              }
-            : s
-        )
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === currentId);
+      if (idx === -1) return prev;
+      const copy = [...prev];
+      const withoutLastBot = copy[idx].messages.filter(
+        (m, i) => !(i === copy[idx].messages.length - 1 && m.role === 'model')
       );
-    } catch (err) {
-      console.error(err);
-      const fallbackMsg: ChatMessage = {
-        id: String(Date.now() + 1),
-        role: 'model',
-        content:
-          'Under Indian law, your rights are protected. If this involves a bounced cheque, send a notice within 30 days under Section 138 NI Act. If a tenancy deposit is withheld, landlords cannot deduct for normal wear and tear.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === activeSessionId
-            ? {
-                ...s,
-                lastUpdatedAt: Date.now(),
-                messages: [...updatedMessages, fallbackMsg],
-              }
-            : s
-        )
-      );
-    } finally {
-      setLoading(false);
+      copy[idx] = { ...copy[idx], messages: withoutLastBot };
+      return copy;
+    });
+
+    handleSend(lastUserMessage.content);
+  };
+
+  // Handle Enter key submit
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
@@ -418,7 +628,7 @@ export const LegalBot: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-[#080c14] text-slate-100 font-sans overflow-hidden">
-      {/* 1. Left Sidebar: Sessions & Case History */}
+      {/* 1. Left Sidebar: Sessions & Conversation History */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 w-72 bg-[#0c1220] border-r border-white/[0.08] flex flex-col transition-transform duration-300 md:relative md:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full md:hidden'
@@ -426,23 +636,11 @@ export const LegalBot: React.FC = () => {
       >
         {/* Brand Header */}
         <div className="p-4 border-b border-white/[0.08] flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-bold shadow-md shadow-amber-500/20">
-              <Scale className="w-4 h-4 stroke-[2.5]" />
-            </div>
-            <div>
-              <div className="font-serif font-bold text-sm text-white tracking-wide">
-                Legal India
-              </div>
-              <div className="text-[10px] text-amber-400 font-medium">
-                AI Counsel · BNS 2023
-              </div>
-            </div>
-          </div>
+          <LegalIndiaLogo size="md" showSubtitle={true} />
 
           <button
             onClick={() => setSidebarOpen(false)}
-            className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/[0.06]"
+            className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/[0.06] cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -452,7 +650,7 @@ export const LegalBot: React.FC = () => {
         <div className="p-3">
           <button
             onClick={handleNewSession}
-            className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/10 to-amber-600/10 hover:from-amber-500/20 hover:to-amber-600/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm shadow-amber-500/5"
+            className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/10 to-amber-600/10 hover:from-amber-500/20 hover:to-amber-600/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
           >
             <Plus className="w-4 h-4 text-amber-400" />
             <span>New Consultation</span>
@@ -470,7 +668,10 @@ export const LegalBot: React.FC = () => {
             return (
               <div
                 key={sess.id}
-                onClick={() => setActiveSessionId(sess.id)}
+                onClick={() => {
+                  if (isStreaming) handleStopGenerating();
+                  setActiveSessionId(sess.id);
+                }}
                 className={`group w-full text-left p-2.5 rounded-xl text-xs transition-all flex items-center justify-between cursor-pointer border ${
                   isActive
                     ? 'bg-white/[0.08] text-white border-white/[0.12] font-semibold'
@@ -530,12 +731,10 @@ export const LegalBot: React.FC = () => {
               {sidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </button>
 
-            <div className="flex items-center gap-2">
-              <span className="font-serif font-bold text-sm text-white">
-                Legal India AI
-              </span>
-              <span className="text-slate-500 text-xs hidden sm:inline">·</span>
-              <span className="text-xs text-amber-300/90 hidden sm:inline font-mono">
+            <div className="flex items-center gap-2.5">
+              <LegalIndiaLogo size="sm" />
+              <span className="text-slate-600 text-xs hidden sm:inline">·</span>
+              <span className="text-xs text-amber-300/90 hidden sm:inline font-mono truncate max-w-[220px]">
                 {activeSession?.title}
               </span>
             </div>
@@ -580,37 +779,57 @@ export const LegalBot: React.FC = () => {
 
         {/* Message Stream */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 max-w-3xl w-full mx-auto scrollbar-thin">
-          {messages.map((msg) => {
+          {messages.map((msg, index) => {
             const isBot = msg.role === 'model';
+            const isLastMessage = index === messages.length - 1;
+
             return (
               <div
                 key={msg.id}
                 className={`flex items-start gap-3.5 ${isBot ? 'justify-start' : 'justify-end'}`}
               >
                 {isBot && (
-                  <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-amber-700 text-slate-950 flex items-center justify-center flex-shrink-0 mt-1 shadow-sm font-bold">
-                    <Scale className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <div className="w-8 h-8 rounded-xl bg-[#0e1626] border border-white/15 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm overflow-hidden p-1">
+                    <LegalIndiaLogo variant="icon" size="sm" />
                   </div>
                 )}
 
                 <div
-                  className={`max-w-[88%] sm:max-w-[80%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed transition-all ${
+                  className={`max-w-[88%] sm:max-w-[82%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed transition-all ${
                     isBot
-                      ? 'bg-[#0f172a]/90 border border-white/[0.08] text-slate-200 shadow-md backdrop-blur-sm'
+                      ? 'bg-[#0f172a]/95 border border-white/[0.08] text-slate-200 shadow-md backdrop-blur-sm'
                       : 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-medium shadow-md shadow-amber-500/10'
                   }`}
                 >
-                  {/* Message content */}
-                  <div className="whitespace-pre-wrap leading-relaxed space-y-2">
-                    {msg.content}
-                  </div>
+                  {/* Rich Formatted Markdown Content */}
+                  {isBot ? (
+                    msg.content ? (
+                      <MarkdownMessage
+                        content={msg.content}
+                        isStreaming={isStreaming && isLastMessage}
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 text-slate-400 py-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce [animation-delay:0.2s]" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce [animation-delay:0.4s]" />
+                        <span className="text-xs text-slate-400 font-medium ml-1">
+                          Analyzing legal facts under current Indian statutes...
+                        </span>
+                      </div>
+                    )
+                  ) : (
+                    <div className="whitespace-pre-wrap leading-relaxed font-medium">
+                      {msg.content}
+                    </div>
+                  )}
 
                   {/* Bot Interactive Actions */}
-                  {isBot && (
+                  {isBot && msg.content && (
                     <div className="mt-3.5 pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
                       <span>{msg.timestamp}</span>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2.5">
                         {/* Audio readout */}
                         <button
                           onClick={() => toggleSpeech(msg.id, msg.content)}
@@ -651,34 +870,39 @@ export const LegalBot: React.FC = () => {
                 </div>
 
                 {!isBot && (
-                  <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 flex items-center justify-center flex-shrink-0 mt-1">
-                    <User className="w-3.5 h-3.5" />
+                  <div className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <User className="w-4 h-4" />
                   </div>
                 )}
               </div>
             );
           })}
 
-          {/* Typing Indicator */}
-          {loading && (
-            <div className="flex items-start gap-3.5">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-amber-700 text-slate-950 flex items-center justify-center flex-shrink-0 mt-1 shadow-sm font-bold">
-                <Scale className="w-3.5 h-3.5 stroke-[2.5]" />
-              </div>
-              <div className="bg-[#0f172a]/90 border border-white/[0.08] rounded-2xl p-3.5 text-xs text-slate-400 flex items-center gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" />
-                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce [animation-delay:0.2s]" />
-                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce [animation-delay:0.4s]" />
-                <span className="text-slate-300 text-xs font-medium">
-                  Reviewing current Indian law & case facts...
-                </span>
-              </div>
+          {/* Regenerate button after stream completes */}
+          {!isStreaming && messages.some((m) => m.role === 'user') && (
+            <div className="flex justify-center pt-1 pb-2">
+              <button
+                onClick={handleRegenerate}
+                className="px-3 py-1.5 rounded-xl bg-[#0f172a] hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+              >
+                <RotateCcw className="w-3 h-3 text-amber-400" />
+                <span>Regenerate response</span>
+              </button>
             </div>
           )}
 
-          {/* Starter Cards (Visible if only initial welcome message is present) */}
+          {/* Starter Cards with Hero Logo Banner (Visible when empty or only initial welcome message is present) */}
           {messages.length <= 1 && (
-            <div className="space-y-3 pt-4">
+            <div className="space-y-4 pt-2">
+              <div className="text-center py-4 space-y-2">
+                <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-white/[0.02] border border-white/[0.08] shadow-xl">
+                  <LegalIndiaLogo size="xl" showSubtitle={true} />
+                </div>
+                <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                  24/7 AI Legal Counsel for Indian Law (Bharatiya Nyaya Sanhita 2023, Consumer Protection Act, NI Act, Model Tenancy Act).
+                </p>
+              </div>
+
               <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                 Common Legal Matters in India:
               </div>
@@ -711,20 +935,27 @@ export const LegalBot: React.FC = () => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Bottom Floating Input Bar */}
+        {/* Bottom Floating Multiline Input Bar (ChatGPT & Gemini Style) */}
         <div className="p-4 max-w-3xl w-full mx-auto">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-            className="bg-[#0f172a] border border-white/[0.12] rounded-2xl p-2 sm:p-2.5 flex items-center gap-2 shadow-2xl focus-within:border-amber-500/60 transition-colors"
-          >
+          {/* Stop generation button when streaming */}
+          {isStreaming && (
+            <div className="flex justify-center mb-2.5">
+              <button
+                onClick={handleStopGenerating}
+                className="px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 hover:bg-slate-800 text-slate-200 text-xs font-medium flex items-center gap-1.5 shadow-lg transition-colors cursor-pointer"
+              >
+                <Square className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
+                <span>Stop generating</span>
+              </button>
+            </div>
+          )}
+
+          <div className="bg-[#0f172a] border border-white/[0.12] rounded-2xl p-2 sm:p-2.5 flex items-end gap-2 shadow-2xl focus-within:border-amber-500/60 transition-colors">
             {/* Voice Dictation */}
             <button
               type="button"
               onClick={toggleListening}
-              className={`p-2.5 rounded-xl transition-all cursor-pointer ${
+              className={`p-2.5 rounded-xl transition-all cursor-pointer flex-shrink-0 ${
                 isListening
                   ? 'bg-rose-600 text-white animate-pulse'
                   : 'text-slate-400 hover:text-amber-400 hover:bg-white/[0.06]'
@@ -734,29 +965,32 @@ export const LegalBot: React.FC = () => {
               {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </button>
 
-            {/* Input field */}
-            <input
-              type="text"
+            {/* Auto-growing multiline Textarea */}
+            <textarea
+              ref={textareaRef}
+              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Describe your legal issue or ask a follow-up in any Indian language..."
-              className="flex-1 bg-transparent border-0 text-white text-xs sm:text-sm placeholder:text-slate-500 focus:outline-none focus:ring-0"
+              onKeyDown={handleKeyDown}
+              placeholder="Ask anything about Indian law, paste your dispute facts, or request a legal notice..."
+              className="flex-1 bg-transparent border-0 text-white text-xs sm:text-sm placeholder:text-slate-500 focus:outline-none focus:ring-0 resize-none max-h-44 py-1.5 scrollbar-thin leading-relaxed"
             />
 
-            {/* Submit button */}
+            {/* Submit / Send button */}
             <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow cursor-pointer flex-shrink-0"
+              onClick={() => handleSend()}
+              disabled={isStreaming || !input.trim()}
+              className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow cursor-pointer flex-shrink-0"
+              title="Send message (Enter)"
             >
-              <Send className="w-4 h-4 stroke-[2.5]" />
+              <ArrowUp className="w-4 h-4 stroke-[3]" />
             </button>
-          </form>
+          </div>
 
           <div className="text-[10px] text-slate-500 text-center mt-2 flex items-center justify-center gap-3">
-            <span>Free Indian Legal Intelligence</span>
+            <span>Free Indian Legal AI</span>
             <span>·</span>
-            <span>All conversations saved locally in browser</span>
+            <span>Press Enter to send, Shift+Enter for new line</span>
           </div>
         </div>
       </main>
@@ -767,8 +1001,9 @@ export const LegalBot: React.FC = () => {
           <div className="bg-[#0c1220] border border-white/[0.12] rounded-2xl max-w-4xl w-full h-[85vh] flex flex-col shadow-2xl overflow-hidden">
             {/* Modal Header */}
             <div className="p-4 border-b border-white/[0.08] flex items-center justify-between bg-[#080c14]">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-amber-400" />
+              <div className="flex items-center gap-3">
+                <LegalIndiaLogo size="sm" />
+                <span className="text-slate-600 text-xs hidden sm:inline">|</span>
                 <h3 className="text-sm font-bold text-white">Court-Ready Document Drafter</h3>
               </div>
 
@@ -874,6 +1109,12 @@ export const LegalBot: React.FC = () => {
 
               {/* Court Document Sheet Preview (Right) */}
               <div className="md:col-span-7 p-6 overflow-y-auto bg-white text-slate-950 font-serif leading-relaxed text-xs sm:text-sm whitespace-pre-wrap selection:bg-amber-200">
+                <div className="flex items-center justify-between border-b border-slate-300 pb-3 mb-4 select-none">
+                  <LegalIndiaLogo size="sm" />
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-sans font-bold">
+                    Statutory Legal Notice
+                  </span>
+                </div>
                 {generatedDoc.body}
               </div>
             </div>

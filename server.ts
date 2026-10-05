@@ -63,63 +63,154 @@ CORE ETHICAL & ACCURACY PRINCIPLES:
 5. LANGUAGE FIDELITY:
    - If user asks in Hindi, respond in Hindi (or English with Hindi transliteration). If requested in Marathi, Tamil, Bengali, Telugu, Gujarati, Kannada, Malayalam, Punjabi, Urdu, adapt the summary and steps directly into that language while keeping statutory section names precise.`;
 
-// 1. Interactive Legal Chatbot Endpoint with Memory
-app.post('/api/legal/chat', async (req: Request, res: Response) => {
-  try {
-    const { messages, language = 'en' } = req.body;
+// 1. Streaming Legal Chatbot Endpoint (ChatGPT / Gemini style)
+app.post('/api/legal/chat/stream', async (req: Request, res: Response) => {
+  const { messages = [], language = 'en' } = req.body;
 
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const sendEvent = (data: any) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      res.status(400).json({ error: 'Messages array is required.' });
+      sendEvent({ error: 'Messages array is required.' });
+      res.write('data: [DONE]\n\n');
+      res.end();
       return;
     }
 
-    const CHATBOT_INSTRUCTION = `You are "Legal India Bot" (लीगल इंडिया एआई), an empathetic, knowledgeable, and reliable senior Indian advocate and legal assistant.
-You are helping a citizen of India understand their rights and solve their legal problems.
+    const CHATBOT_INSTRUCTION = `You are "Legal India AI" (लीगल इंडिया एआई), an exceptionally knowledgeable, empathetic, and sharp senior Indian advocate and legal intelligence companion — operating with the natural conversational fluency of Gemini and ChatGPT.
 
-YOUR CORE CONVERSATIONAL INSTRUCTIONS:
-1. MEMORY & CONTEXT:
-   - You have memory of the entire chat history. Always remember details the citizen shared earlier (e.g. names, amounts, dates, cities, landlords, employers, banks, whether notice was sent).
-   - If a citizen asks follow-up questions like "what should I do next?", "draft that notice for me", or "what if they refuse?", refer back to their specific case details.
-2. CURRENT INDIAN LAW (2024+):
-   - Criminal law: Always use Bharatiya Nyaya Sanhita (BNS 2023), BNSS 2023, and BSA 2023 for offenses from 1 July 2024. Mention old IPC / CrPC sections in parentheses for familiarity (e.g. "Section 318 BNS (formerly Section 420 IPC)").
-   - Consumer issues: Consumer Protection Act 2019 (CPA 2019) and e-Daakhil filing.
-   - Cheque bounce: Section 138 Negotiable Instruments Act (strict 30-day notice requirement).
-   - Tenancy: Transfer of Property Act 1882 (s.106) & Model Tenancy principles (deposit cannot be withheld for ordinary wear and tear).
-   - Cyber fraud / Digital Arrest: IT Act s.66D, BNS s.308 (extortion). Mention 1930 Golden hour immediately if financial loss occurred.
-   - Free Legal Aid: Article 39A & NALSA helpline 15100 for women, children, workers, custody, low income.
-3. CONVERSATIONAL TONE:
-   - Calm, reassuring, respectful, easy to understand. Avoid legal jargon without explaining it.
-   - Format responses cleanly with bullet points, bold key terms, and clear next steps.
-4. EMERGENCY DETECTION:
-   - If physical danger, domestic violence, cyber fraud within last 2 hours, or imminent arrest is mentioned, highlight emergency helplines:
-     * 112 (Police)
-     * 1930 (Cyber Fraud)
-     * 181 (Women in Distress)
-     * 15100 (NALSA Free Lawyer)
-5. MULTILINGUAL:
-   - If user asks in Hindi, respond in Hindi (or Hinglish if appropriate). If asked in Marathi, Tamil, Bengali, Telugu, Gujarati, etc., converse naturally in that language while keeping statutory citations accurate.`;
+HOW YOU ENGAGE & ASSIST:
+1. NATURAL CONVERSATION FIRST:
+   - Talk to the citizen with warm empathy, clarity, and authority. Acknowledge the emotional and financial strain of their specific situation.
+   - Do NOT sound like an inflexible robot. Write naturally, referencing the specific names, amounts (e.g. ₹50,000, 1.5 Lakhs), cities, and dates they shared.
+   - If you need additional facts to give pinpoint legal advice, ask clarifying questions while providing the immediate statutory remedies.
 
-    // Map messages to GenAI contents structure
-    const contents = messages.map((m: { role: string; content: string }) => ({
-      role: m.role === 'model' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
+2. SUBSTANTIVE ACCURACY UNDER INDIAN LAW (2024+):
+   - Ground your advice firmly in current Indian law:
+     * Criminal: Bharatiya Nyaya Sanhita (BNS 2023), BNSS 2023, BSA 2023 (mention former IPC/CrPC in parentheses when helpful, e.g. "Section 318 BNS (formerly Section 420 IPC)").
+     * Tenancy: Model Tenancy Act, Transfer of Property Act (s.106) — security deposits cannot be deducted for normal wear and tear.
+     * Cheque Bounce: Section 138 Negotiable Instruments Act — strict 30-day notice clock, 15-day payment window, Section 142 complaint before JMFC.
+     * Consumer Protection: CPA 2019, e-Daakhil filing, National Consumer Helpline (1915).
+     * Cyber Fraud / Digital Arrest: IT Act s.66D, BNS s.308/204. State clearly that Digital Arrest does not exist in Indian law and urge calling 1930 within the Golden Hour.
+     * Free Legal Aid: Article 39A & NALSA helpline 15100.
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+3. STRUCTURED ACTIONABLE ADVICE:
+   - Use clean Markdown formatting with clear headings, bold statutory terms, and numbered step-by-step action plans.
+   - Include immediate remedies, limitation periods, and notice requirements.
+
+4. MULTILINGUAL:
+   - If the user writes in Hindi, Hinglish, Marathi, Tamil, etc., reply warmly and fluently in their language.`;
+
+    // Sanitize message turns for Gemini SDK
+    const validMessages = messages.filter(
+      (m: any) => m && typeof m.content === 'string' && m.content.trim().length > 0
+    );
+
+    const firstUserIdx = validMessages.findIndex((m: any) => m.role === 'user');
+    const messagesForAi = firstUserIdx !== -1 ? validMessages.slice(firstUserIdx) : validMessages;
+
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    for (const msg of messagesForAi) {
+      const role = msg.role === 'model' ? 'model' : 'user';
+      if (contents.length > 0 && contents[contents.length - 1].role === role) {
+        contents[contents.length - 1].parts[0].text += '\n\n' + msg.content;
+      } else {
+        contents.push({ role, parts: [{ text: msg.content }] });
+      }
+    }
+
+    if (contents.length === 0) {
+      const fallback = getFallbackChatResponse('', messages, language);
+      sendEvent({ text: fallback });
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    // Use gemini-3.1-flash-lite as primary high-performance model with active quota
+    const stream = await ai.models.generateContentStream({
+      model: 'gemini-3.1-flash-lite',
       contents: contents,
       config: {
         systemInstruction: CHATBOT_INSTRUCTION,
       },
     });
 
-    const reply = response.text || "I understand your legal concern. Could you provide a few more details so I can guide you under the exact Indian statute?";
+    for await (const chunk of stream) {
+      if (chunk.text) {
+        sendEvent({ text: chunk.text });
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (err: any) {
+    console.warn('Streaming error, falling back to comprehensive legal engine:', err?.message || err);
+    const lastUserMsg = messages.filter((m: any) => m.role === 'user').pop()?.content || '';
+    const fallbackText = getFallbackChatResponse(lastUserMsg, messages, language);
+
+    // Stream fallback smoothly in tokens
+    const words = fallbackText.split(' ');
+    for (let i = 0; i < words.length; i += 4) {
+      const chunk = words.slice(i, i + 4).join(' ') + ' ';
+      sendEvent({ text: chunk });
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }
+});
+
+// Standard Legal Chatbot Endpoint (Non-streaming fallback)
+app.post('/api/legal/chat', async (req: Request, res: Response) => {
+  const { messages = [], language = 'en' } = req.body;
+  try {
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      res.status(400).json({ error: 'Messages array is required.' });
+      return;
+    }
+
+    const CHATBOT_INSTRUCTION = `You are "Legal India AI" (लीगल इंडिया एआई), an empathetic, knowledgeable, and authoritative senior Indian advocate and access-to-justice guide. Converse naturally and helpfully under current Indian law.`;
+
+    const validMessages = messages.filter(
+      (m: any) => m && typeof m.content === 'string' && m.content.trim().length > 0
+    );
+
+    const firstUserIdx = validMessages.findIndex((m: any) => m.role === 'user');
+    const messagesForAi = firstUserIdx !== -1 ? validMessages.slice(firstUserIdx) : validMessages;
+
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    for (const msg of messagesForAi) {
+      const role = msg.role === 'model' ? 'model' : 'user';
+      if (contents.length > 0 && contents[contents.length - 1].role === role) {
+        contents[contents.length - 1].parts[0].text += '\n\n' + msg.content;
+      } else {
+        contents.push({ role, parts: [{ text: msg.content }] });
+      }
+    }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-lite',
+      contents: contents,
+      config: {
+        systemInstruction: CHATBOT_INSTRUCTION,
+      },
+    });
+
+    const reply = response.text || getFallbackChatResponse(messages[messages.length - 1]?.content || '', messages, language);
     res.json({ success: true, reply });
   } catch (err: any) {
-    console.error('Error in /api/legal/chat, using fallback bot response:', err);
-    const { messages = [] } = req.body;
+    console.warn('Gemini chat API fallback activated:', err?.message || err);
     const lastUserMsg = messages.filter((m: any) => m.role === 'user').pop()?.content || '';
-    const fallbackReply = getFallbackChatResponse(lastUserMsg, messages);
+    const fallbackReply = getFallbackChatResponse(lastUserMsg, messages, language);
     res.json({ success: true, reply: fallbackReply });
   }
 });
@@ -751,60 +842,284 @@ function getFallbackScam(text: string) {
   };
 }
 
-function getFallbackChatResponse(currentMessage: string, history: Array<{ role: string; content: string }>): string {
-  const fullText = (history.map(m => m.content).join(' ') + ' ' + currentMessage).toLowerCase();
+function getFallbackChatResponse(
+  currentMessage: string,
+  history: Array<{ role: string; content: string }>,
+  language: string = 'en'
+): string {
+  const fullConversation = history.map((m) => m.content).join('\n') + '\n' + currentMessage;
+  const fullText = fullConversation.toLowerCase();
+  const latestText = currentMessage.toLowerCase();
 
-  if (fullText.includes('cheque') || fullText.includes('check') || fullText.includes('bounce') || fullText.includes('138')) {
-    return `Regarding your bounced cheque matter under **Section 138 of the Negotiable Instruments Act, 1881**:
+  // 1. Context & Entity Extraction
+  const amountMatch = fullConversation.match(/(?:₹|rs\.?|inr)\s?([\d,]+(?:\.\d+)?)|([\d,]+)\s?(?:rupees|lakh|crore|k)/i);
+  const detectedAmount = amountMatch ? amountMatch[0] : null;
 
-1. **Strict 30-Day Notice Clock:** You must issue a formal Legal Demand Notice within 30 days of receiving the bank memo.
-2. **15-Day Payment Window:** The drawer has 15 days from delivery of your notice to pay the full amount.
-3. **Court Complaint:** If they fail to pay, you have 30 days after the 15-day window to file a criminal complaint before the Judicial Magistrate.
-4. **Punishment:** Up to 2 years imprisonment, or fine up to twice the cheque amount, or both.
+  const isHindi = language === 'hi' || /[\u0900-\u097F]/.test(currentMessage) || latestText.includes('hindi') || latestText.includes('हिंदी');
 
-You can use our **Draft Legal Notices** section to generate a court-compliant Section 138 Notice in 1 click! Would you like me to guide you on how to serve it via Speed Post?`;
+  // 2. Specific Follow-Up Intention Handling
+  const isAskingToDraft =
+    latestText.includes('draft') ||
+    latestText.includes('notice') ||
+    latestText.includes('format') ||
+    latestText.includes('write letter') ||
+    latestText.includes('तैयार') ||
+    latestText.includes('प्रारूप');
+
+  const isAskingWhatIfRefuses =
+    latestText.includes('refuse') ||
+    latestText.includes("doesn't pay") ||
+    latestText.includes('ignore') ||
+    latestText.includes('not pay') ||
+    latestText.includes('ना दे') ||
+    latestText.includes('मना कर दे');
+
+  const isAskingNextSteps =
+    latestText.includes('next') ||
+    latestText.includes('what should i do') ||
+    latestText.includes('steps') ||
+    latestText.includes('आगे क्या');
+
+  // --- Scenario 1: Cheque Bounce (Section 138 NI Act) ---
+  if (fullText.includes('cheque') || fullText.includes('check') || fullText.includes('bounce') || fullText.includes('138') || fullText.includes('dishonor')) {
+    if (isAskingToDraft) {
+      return `### Formal Demand Notice Draft under Section 138 of Negotiable Instruments Act, 1881
+
+**BY REGISTERED POST A.D. / SPEED POST**
+
+**Date:** ${new Date().toLocaleDateString('en-IN')}
+
+**To:**
+[Drawer Name]
+[Drawer Full Address]
+
+**Subject:** Legal Demand Notice under Section 138 of the Negotiable Instruments Act, 1881 for dishonour of Cheque ${detectedAmount ? `amounting to ${detectedAmount}` : ''}.
+
+**Sir / Madam,**
+
+Under instructions from my client, I hereby serve you with this formal statutory notice:
+
+1. That towards discharge of your legally enforceable debt/liability, you issued Cheque No. [Cheque Number] dated [Cheque Date] drawn on [Bank Name] for ${detectedAmount ? detectedAmount : '₹[Amount]'}.
+2. That on presentation, the said cheque was returned unpaid by the bank with the memo dated [Memo Date] endorsing reason: **"Funds Insufficient"**.
+3. You are hereby called upon to pay the said sum of ${detectedAmount ? detectedAmount : '₹[Amount]'} within **15 (fifteen) days** from the receipt of this notice.
+4. Take notice that failing payment within 15 days, my client shall initiate criminal prosecution against you under Section 138 of the Negotiable Instruments Act before the competent Judicial Magistrate, wherein you shall be liable for imprisonment up to 2 years, fine up to twice the cheque amount, and costs.
+
+Yours faithfully,  
+**[Your Name / Advocate]**
+
+---
+💡 *You can click **"Draft Notice"** in the top bar to edit, customize, and print this notice instantly!*`;
+    }
+
+    if (isAskingWhatIfRefuses) {
+      return `### Action If Drawer Refuses or Fails to Pay within 15 Days:
+
+1. **Calculate the 30-Day Court Window:**
+   - Once the 15-day statutory payment window expires, you have exactly **30 days** to file a Criminal Complaint under **Section 142(1)(b) of the Negotiable Instruments Act**.
+2. **Where to File (Jurisdiction):**
+   - Under the 2015 amendment to Section 142(2), file the complaint before the **Metropolitan Magistrate / Judicial Magistrate First Class (JMFC)** in whose jurisdiction **your bank branch** (where you deposited the cheque) is located.
+3. **Documents Required for Court:**
+   - Original Bounced Cheque
+   - Original Bank Return Memo
+   - Copy of Statutory Demand Notice served
+   - Speed Post Receipt & Online Delivery Tracking Report (proof of service)
+4. **Interim Compensation (Section 143A NI Act):**
+   - The court can order the accused to deposit up to **20% of the cheque amount** as interim compensation to you during trial!`;
+    }
+
+    return `### Legal Remedy for Bounced Cheque (${detectedAmount || 'Section 138 NI Act'})
+
+Under **Section 138 of the Negotiable Instruments Act, 1881**, cheque dishonour is a serious criminal offense punishable with **up to 2 years imprisonment**, or a fine of **twice the cheque amount**, or both.
+
+#### 1. Strict Statutory Timelines:
+* **Step 1 (30 Days Clock):** You must dispatch a written **Legal Demand Notice** to the drawer within **30 days** of receiving the bank dishonour memo.
+* **Step 2 (15 Days Payment Window):** The drawer gets 15 days from delivery to pay the full amount (${detectedAmount || 'cheque sum'}).
+* **Step 3 (30 Days Court Filing):** If they fail to pay within 15 days, you must file a criminal complaint before the Judicial Magistrate within 30 days.
+
+#### 2. Key Procedural Requirements:
+* Always send the notice via **Registered Post A.D. or Speed Post** and retain the postal tracking receipt.
+* Notice via WhatsApp or Email is also accepted by the Supreme Court as supplementary proof (*In Re: Cognizance for Extension of Limitation*).
+
+Would you like me to draft the formal Section 138 Legal Notice for you right now?`;
   }
 
-  if (fullText.includes('deposit') || fullText.includes('rent') || fullText.includes('landlord') || fullText.includes('tenant')) {
-    return `Regarding your tenancy and security deposit dispute:
+  // --- Scenario 2: Tenancy & Security Deposit Refund Dispute ---
+  if (fullText.includes('deposit') || fullText.includes('rent') || fullText.includes('landlord') || fullText.includes('tenant') || fullText.includes('flat') || fullText.includes('makan malik')) {
+    if (isAskingToDraft) {
+      return `### Legal Demand Notice for Refund of Security Deposit
 
-1. **Lawful Right to Refund:** Under the **Model Tenancy Act** and state tenancy laws, the landlord cannot forfeit your security deposit once you have handed over keys and cleared electricity/utility bills.
-2. **No Deduction for Wear & Tear:** Landlords cannot charge you for normal wall fading, aging, or routine repainting.
-3. **Immediate Step:** Send a formal 15-day Legal Demand Notice demanding refund of the deposit amount along with 18% per annum interest.
-4. **Remedy Forum:** If they fail to pay, you can approach the local Rent Authority or file a consumer petition for deficiency in service on the **e-Daakhil** portal.
+**Date:** ${new Date().toLocaleDateString('en-IN')}
 
-Would you like me to prepare the legal demand notice for your landlord with your specific deposit amount?`;
+**To:**
+[Landlord Name]
+[Landlord Address]
+
+**Subject:** Final Legal Demand Notice for Refund of Security Deposit ${detectedAmount ? `amounting to ${detectedAmount}` : ''} for Flat/Premises [Address].
+
+**Sir / Madam,**
+
+1. That I was a tenant in respect of premises situated at [Premises Address] under the Rental Agreement dated [Agreement Date], having deposited a refundable security deposit of ${detectedAmount || '₹[Amount]'}.
+2. That I peacefully handed over vacant possession of the premises to you on [Vacating Date] with all electricity, maintenance, and utility bills cleared up to date.
+3. That under the **Model Tenancy Act** and settled law, normal wear and tear (including aging paint and minor scuffs) cannot be deducted from a tenant's security deposit.
+4. I hereby call upon you to refund the full security deposit sum of ${detectedAmount || '₹[Amount]'} into my bank account within **15 days** from receipt of this notice, failing which I shall initiate:
+   - Proceedings before the Rent Court / Rent Authority;
+   - A consumer petition on the **e-Daakhil** portal for deficiency in service and unfair trade practice, claiming the principal amount with **18% interest per annum** and litigation damages.
+
+Yours sincerely,  
+**[Your Full Name & Contact]**`;
+    }
+
+    return `### Tenancy Rights: Refund of Security Deposit (${detectedAmount || 'Dispute'})
+
+Under the **Model Tenancy Act** and settled Supreme Court precedents, security deposit withholding is strictly regulated:
+
+#### 1. Your Statutory Rights:
+* **No Deductions for Normal Wear & Tear:** Landlords cannot lawfully deduct money for routine wall repaint, natural aging, or general maintenance.
+* **Immediate Refund Requirement:** Once you handover keys and clear electricity/water receipts, the landlord is obligated to return the deposit immediately.
+* **Interest on Delayed Refund:** You are entitled to claim **12% to 18% per annum statutory interest** on withheld funds.
+
+#### 2. Immediate Recommended Steps:
+1. **Send a 15-Day Legal Demand Notice:** Demanding transfer of ${detectedAmount || 'the security deposit'} to your bank account.
+2. **File on e-Daakhil (Consumer Forum):** Withholding tenant deposit constitutes a "deficiency of service" under the **Consumer Protection Act, 2019**. You can file online without hiring an expensive lawyer.
+3. **Approach the Rent Authority:** Under state tenancy laws (e.g. Karnataka Rent Act, Delhi Rent Control Act, Maharashtra Rent Control Act).
+
+Would you like me to prepare the formal legal demand notice to send your landlord?`;
   }
 
-  if (fullText.includes('digital arrest') || fullText.includes('cbi') || fullText.includes('customs') || fullText.includes('parcel') || fullText.includes('skype')) {
-    return `⚠️ **CRITICAL WARNING:** This is a **100% fake "Digital Arrest" extortion scam**.
+  // --- Scenario 3: Cyber Fraud & "Digital Arrest" Scams ---
+  if (fullText.includes('digital arrest') || fullText.includes('cbi') || fullText.includes('customs') || fullText.includes('fedex') || fullText.includes('skype') || fullText.includes('video call') || fullText.includes('cyber')) {
+    return `🚨 **CRITICAL SAFETY ADVISORY: THIS IS A 100% FAKE "DIGITAL ARREST" SCAM**
 
-1. **No Police or CBI Official arrests over Skype or WhatsApp:** In India, police never issue warrants or interrogate citizens over video calls.
-2. **Never Transfer Any Money:** Government agencies never ask you to transfer funds to any "safe RBI verification account".
-3. **If you already sent money:** Immediately call **1930** (Citizen Cyber Fraud Helpline) within the Golden Hour so banks can freeze the scammer's account.
-4. **Report:** File a complaint at **cybercrime.gov.in**.
+Under Indian Law, there is **NO concept of "Digital Arrest"**. This is a transnational extortion syndicate.
 
-Hang up the call immediately. You have committed no crime!`;
+#### 1. How Indian Law Actually Operates:
+* **No Video Call Arrests:** Under the **Bharatiya Nagarik Suraksha Sanhita (BNSS 2023)**, police, CBI, ED, and customs officials NEVER interrogate, record official statements, or arrest citizens over Skype, WhatsApp, or video calls.
+* **No RBI "Verification" Accounts:** No government agency ever directs a citizen to transfer money into any "safe reserve account" for clearance.
+* **Offenses Committed Against You:** The scammers are committing criminal impersonation (**Section 204 BNS**), extortion (**Section 308 BNS**), and cyber fraud (**Section 66D IT Act, 2000**).
+
+#### 2. Immediate Emergency Protocol:
+1. **Hang Up and Block:** Terminate the call immediately. You face zero legal jeopardy.
+2. **If You Already Transferred Money (${detectedAmount || 'funds'}):**
+   - **CALL 1930 IMMEDIATELY:** This is the National Cyber Crime Helpline. If reported within the **Golden Hour (first 2 hours)**, nodal officers can freeze the scammer's bank account before withdrawal.
+3. **Report Online:** File a complaint at **https://cybercrime.gov.in**.
+
+Do NOT send a single rupee. You have committed no crime!`;
   }
 
-  if (fullText.includes('fir') || fullText.includes('police refuse') || fullText.includes('station')) {
-    return `If the police station is refusing to register your FIR:
+  // --- Scenario 4: Consumer Protection & Defective Goods ---
+  if (fullText.includes('amazon') || fullText.includes('flipkart') || fullText.includes('defective') || fullText.includes('damaged') || fullText.includes('refund') || fullText.includes('broken') || fullText.includes('warranty') || fullText.includes('tv') || fullText.includes('phone')) {
+    return `### Consumer Rights: Refund & Replacement (${detectedAmount || 'Defective Goods'})
 
-1. **Zero FIR Right (Section 173(1) BNSS):** Under the new **Bharatiya Nagarik Suraksha Sanhita (BNSS 2023)**, police **must** register a Zero FIR regardless of where the crime took place. They cannot turn you away citing territorial jurisdiction.
-2. **Penalty on Police:** Refusing to record an FIR for cognizable crimes is a punishable offense under **Section 199 BNS (formerly Section 166A IPC)**.
-3. **Next Step:** You can send your written complaint to the Superintendent of Police (SP) by Registered Post under Section 173(3) BNSS or file an application directly before the Judicial Magistrate under Section 175(3) BNSS.
+Under the **Consumer Protection Act, 2019 (CPA 2019)** and the **Consumer Protection (E-Commerce) Rules, 2020**:
 
-Would you like me to draft a formal Police Complaint Letter for you?`;
+#### 1. Your Statutory Entitlements:
+* **Product Liability (Section 84 CPA 2019):** E-commerce platforms and manufacturers cannot escape liability by pointing to "return window expired" if the product arrived broken, counterfeit, or substandard.
+* **Unfair Trade Practice (Section 2(47)):** Refusing return for damaged goods or imposing arbitrary cancellation charges violates CCPA guidelines.
+* **Dark Patterns Prohibition:** The Central Consumer Protection Authority (CCPA) 2023 rules prohibit deceptive cancellation traps.
+
+#### 2. Step-by-Step Resolution Roadmap:
+1. **National Consumer Helpline (NCH):** Call toll-free **1915** or WhatsApp **8800001915**. Nearly 85% of e-commerce grievances are resolved here within 7 days.
+2. **Pre-Litigation Legal Notice:** Give the company a 15-day deadline to replace the item or refund ${detectedAmount || 'the purchase price'}.
+3. **File on e-Daakhil Portal (edaakhil.nic.in):**
+   - Filing fee is ₹0 for claims up to ₹5 Lakhs!
+   - You can attend hearings virtually from home.
+
+Would you like me to draft a Consumer Grievance Notice for you?`;
   }
 
-  return `I am here to assist you with your legal query under Indian law.
+  // --- Scenario 5: Police Refusing to File FIR / Criminal Complaint ---
+  if (fullText.includes('fir') || fullText.includes('police refuse') || fullText.includes('thana') || fullText.includes('station') || fullText.includes('snatch') || fullText.includes('theft')) {
+    return `### Rights When Police Refuse to Register an FIR
 
-To give you the most accurate advice:
-1. **What type of issue is this?** (e.g. money dispute, tenancy/deposit, cyber fraud, defective goods, criminal matter)
-2. **When did this happen?** (Important for checking limitation deadlines)
-3. **Do you have written proof?** (Invoices, WhatsApp chats, agreements, or bank memos)
+Under the new **Bharatiya Nagarik Suraksha Sanhita (BNSS 2023)** and the landmark Supreme Court ruling in *Lalita Kumari v. Govt of UP*:
 
-Tell me the details in your own words, and I will outline your rights under current statutes like the **Bharatiya Nyaya Sanhita (BNS 2023)**, **Consumer Protection Act**, or **NI Act**, and tell you what steps to take right now.`;
+#### 1. Mandatory Statutory Duty:
+* **Zero FIR Mandate (Section 173(1) BNSS):** The police MUST register an FIR immediately for any cognizable offense, regardless of where the crime occurred. They cannot dismiss you citing "jurisdiction".
+* **Free Copy of FIR (Section 173(2) BNSS):** You have a legal right to receive a copy of the FIR **free of cost** immediately.
+* **Criminal Penalty on Errant Officers:** A police officer who refuses to register an FIR commits an offense under **Section 199 BNS (formerly Section 166A IPC)**, punishable with up to **2 years imprisonment**.
+
+#### 2. What To Do Next:
+1. **Written Complaint to SP (Section 173(3) BNSS):** Send your complaint by Registered Post to the Superintendent of Police / DCP. The SP is legally mandated to investigate or order registration.
+2. **Application to Judicial Magistrate (Section 175(3) BNSS):** Formerly known as Section 156(3) CrPC, a Magistrate can order the police station to register an FIR and submit a status report within 14 days.
+
+Would you like me to draft the Police Complaint letter for you?`;
+  }
+
+  // --- Scenario 6: Employment & Unpaid Salary ---
+  if (fullText.includes('salary') || fullText.includes('employer') || fullText.includes('job') || fullText.includes('fired') || fullText.includes('resigned') || fullText.includes('pf') || fullText.includes('wages')) {
+    return `### Legal Protections for Unpaid Salary & Unlawful Termination
+
+Under the **Payment of Wages Act, 1936**, the **Industrial Disputes Act, 1947**, and Indian Contract Act:
+
+#### 1. Your Rights:
+* **Statutory Obligation to Pay:** An employer cannot withhold earned salary, notice pay, or accrued leave balance, even if you resigned without serving complete notice.
+* **Illegal Withholding of Documents:** Employers have no legal lien over your relieving letter, experience certificate, or PF dues.
+* **Recovery Forum:** You can file a recovery application under **Section 33C(2) of the Industrial Disputes Act** or before the **Labour Commissioner**.
+
+#### 2. Action Steps:
+1. Issue a formal **15-day Legal Notice for Recovery of Dues** (${detectedAmount || 'unpaid salary'}) with 18% interest.
+2. File an online grievance on the Ministry of Labour portal (**SAMADHAN / Shram Suvidha**).
+
+Would you like a formal Legal Notice to send to your HR / Employer?`;
+  }
+
+  // --- Scenario 7: Domestic Violence & Maintenance ---
+  if (fullText.includes('wife') || fullText.includes('husband') || fullText.includes('domestic violence') || fullText.includes('maintenance') || fullText.includes('divorce') || fullText.includes('in-laws')) {
+    return `### Legal Rights under Domestic Violence & Family Laws
+
+Under the **Protection of Women from Domestic Violence Act, 2005 (PWDVA)** and the **Bharatiya Nagarik Suraksha Sanhita (BNSS 2023)**:
+
+#### 1. Available Protections:
+* **Right to Reside in Shared Household (Section 19 PWDVA):** A woman cannot be evicted or excluded from the matrimonial home.
+* **Monthly Maintenance (Section 144 BNSS / Section 20 PWDVA):** Right to interim and final financial maintenance for self and children.
+* **Protection Orders (Section 18):** Restraining orders preventing the respondent from contacting or committing acts of violence.
+* **Cruelty (Section 85 & 86 BNS):** Criminal protection against mental or physical harassment.
+
+#### 2. Immediate Free Assistance:
+* **National Women Helpline:** Call **181** (24/7 Toll-Free).
+* **Free Government Legal Aid:** Call **15100** (National Legal Services Authority - NALSA) for an assigned free court advocate.`;
+  }
+
+  // --- Scenario 8: Right to Information (RTI) ---
+  if (fullText.includes('rti') || fullText.includes('information') || fullText.includes('pio') || fullText.includes('government record')) {
+    return `### Right to Information (RTI Act, 2005)
+
+Under **Section 6 of the RTI Act, 2005**, every Indian citizen has the statutory right to inspect government records, tenders, road works, and fund disbursements:
+
+1. **Filing Method:** File online at **https://rtionline.gov.in** for Central ministries, or submit physically to the Public Information Officer (PIO) with a ₹10 Postal Order.
+2. **Timelines:** The PIO must furnish information within **30 days** (or 48 hours if life and liberty is involved).
+3. **Penalties:** Under **Section 20**, a delay without reasonable cause attracts a penalty of **₹250 per day up to ₹25,000** deducted directly from the PIO's salary.`;
+  }
+
+  // --- Hindi Response Adaptation ---
+  if (isHindi) {
+    return `नमस्ते। मैं **लीगल इंडिया एआई (Legal India AI)** हूँ।
+
+मैंने आपके मामले का संज्ञान लिया है${detectedAmount ? ` (राशि: ${detectedAmount})` : ''}। भारतीय कानून के तहत आपके अधिकारों की पूरी सुरक्षा उपलब्ध है:
+
+1. **कानूनी स्थिति:** आपके मामले में उचित कानूनी प्रक्रिया और समय सीमा (Limitation Period) का पालन आवश्यक है।
+2. **तत्काल कदम:** संबंधित पक्ष को 15 दिनों का औपचारिक **लीगल डिमांड नोटिस (Legal Demand Notice)** भेजें।
+3. **उपाय और मंच:** यदि वे समाधान नहीं करते हैं, तो आप सक्षम न्यायालय, उपभोक्ता फोरम (**e-Daakhil**), या संबंधित प्राधिकरण में वाद प्रस्तुत कर सकते हैं।
+
+आप शीर्ष बार में **"Court Notices"** पर क्लिक करके तुरंत न्यायालयीन प्रारूप तैयार कर सकते हैं। क्या आप चाहते हैं कि मैं आपके लिए यह नोटिस तैयार करूँ?`;
+  }
+
+  // --- Default Comprehensive Advisory ---
+  return `### Legal Assessment & Guidance under Indian Law
+
+I have noted the details of your legal matter${detectedAmount ? ` involving ${detectedAmount}` : ''}.
+
+Under current Indian statutes (including the **Bharatiya Nyaya Sanhita 2023**, **Consumer Protection Act 2019**, and **Civil Procedure Code**):
+
+#### 1. Key Legal Principles:
+* **Limitation Period:** Civil and criminal actions have strict statutory limitation clocks (typically 30 days for cheque bounce notices, 2 years for consumer complaints, 3 years for debt recovery).
+* **Documentary Proof:** Preserve all communications (WhatsApp chats, bank statements, invoices, email trails). Under **Section 63 of the Bharatiya Sakshya Adhiniyam, 2023 (BSA)**, electronic records are admissible evidence.
+
+#### 2. Immediate Recommended Steps:
+1. **Issue a Formal Legal Demand Notice:** Give the opposing party 15 days to remedy the grievance before initiating litigation.
+2. **Free Legal Assistance:** If you need an assigned court advocate, you can dial the NALSA helpline at **15100** (Free Legal Aid under Article 39A).
+
+Could you share a few more specifics (e.g., the city/state where this took place, or the approximate timeline) so I can tailor the exact section and court jurisdiction for you?`;
 }
 
 // Setup Vite in Dev or Static in Production

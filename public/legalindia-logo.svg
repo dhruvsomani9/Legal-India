@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" width="100%" height="100%" fill="none">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@800&amp;display=swap');
+      .brand-saffron { fill: #FF671F; }
+      .brand-ash { fill: #D1CDC4; }
+      .brand-green { fill: #229944; }
+      .brand-text {
+        font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+        font-weight: 800;
+        font-size: 82px;
+        letter-spacing: -1.5px;
+      }
+    </style>
+  </defs>
+
+  <g transform="translate(10, 88)">
+    <!-- "Legal" in Tricolor Saffron -->
+    <text x="0" y="0" class="brand-text brand-saffron">Legal</text>
+
+    <!-- Stylized "I": Left Pillar in Saffron (angled top) -->
+    <path d="M 203 -62 L 214 -68 L 214 0 L 203 0 Z" class="brand-saffron" />
+
+    <!-- Stylized "I": Right Pillar in Ash/Silver (angled top) -->
+    <path d="M 219 -68 L 230 -74 L 230 0 L 219 0 Z" class="brand-ash" />
+
+    <!-- "ndia" in Tricolor Green -->
+    <!-- 'n' -->
+    <g transform="translate(236, 0)">
+      <text x="0" y="0" class="brand-text brand-green">ndia</text>
+    </g>
+  </g>
+</svg>
